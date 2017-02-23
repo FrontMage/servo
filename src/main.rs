@@ -1,8 +1,11 @@
 extern crate chunked_transfer;
 extern crate servo;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::thread;
-use servo::res::{Res, Response};
+use servo::request;
+use servo::request::Req;
+use servo::response;
+use servo::response::{Res, Response};
 use servo::file::*;
 
 fn main() {
@@ -11,13 +14,11 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                thread::spawn(|| {
-                    let mut res = Res {
-                        code: 200,
-                        msg: "OK".to_string(),
-                        stream: stream.try_clone().unwrap(),
-                    };
-                    handle_client(stream, &mut res)
+                thread::spawn(move || {
+                    let req_stream = &stream.try_clone().unwrap();
+                    let req = request::new(req_stream);
+                    let res = response::new(stream.try_clone().unwrap());
+                    handle_client(req, res)
                 });
             }
             Err(e) => println!("Unable to connect: {}", e),
@@ -25,8 +26,18 @@ fn main() {
     }
 }
 
-fn handle_client(stream: TcpStream, mut res: &mut Res) {
-    let buf = get_file_buffer(&get_path(&stream)).unwrap();
-    res.send(buf).expect("Response sent");
-    // res.error("".to_string().into_bytes()).expect("Failed sending response");
+fn handle_client(req: Req, mut res: Res) {
+    match get_file_buffer(&req.path) {
+        Ok(buf) => {
+            println!("{:?}", req);
+            res.send(buf).expect("Failed sending response");
+        }
+        Err(e) => {
+            println!("{}", &e.msg);
+            res.code(e.code)
+                .msg(&e.msg)
+                .error(format!("{}", e.origin).into_bytes())
+                .expect(&format!("Failed to send response: {}", &e.msg));
+        }
+    }
 }
